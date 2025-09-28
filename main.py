@@ -165,6 +165,10 @@ async def extract_video(request: VideoRequest):
         
         video_data = extract_video_info(url)
         
+        # Railway 프록시 다운로드 URL 생성
+        base_url = "https://railway-ytdlp-fresh-railway-ytdlp-fresh.up.railway.app"
+        proxy_url = f"{base_url}/stream?url={url}"
+        
         return {
             "success": True,
             "video_info": {
@@ -174,10 +178,11 @@ async def extract_video(request: VideoRequest):
                 "uploader": video_data.get("uploader"),
                 "formats": video_data.get("formats", [])
             },
-            "download_url": video_data.get("direct_url", ""),
-            "direct_url": video_data.get("direct_url", ""),
+            "download_url": proxy_url,  # Railway 프록시 URL 사용
+            "direct_url": proxy_url,
+            "proxy_url": proxy_url,
             "selected_format": video_data.get("selected_format", "auto"),
-            "message": "Video information extracted successfully with direct download URL"
+            "message": "Video information extracted with Railway proxy download URL"
         }
         
     except HTTPException:
@@ -202,6 +207,74 @@ async def server_status():
             "RAILWAY_ENVIRONMENT": os.getenv("RAILWAY_ENVIRONMENT")
         }
     }
+
+@app.get("/stream")
+async def stream_video(url: str, token: str = None):
+    """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할"""
+    try:
+        logger.info(f"🎬 Streaming video: {url}")
+        
+        if not YT_DLP_AVAILABLE:
+            return {"error": "yt-dlp not available for streaming"}
+        
+        # yt-dlp로 실제 비디오 URL 추출 (더 관대한 포맷 선택)
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'best[height<=720][ext=mp4]/best[height<=720]/mp4/best',
+            'noplaylist': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            # 스트리밍 가능한 URL 찾기
+            stream_url = None
+            if 'url' in info and info['url']:
+                stream_url = info['url']
+            
+            if not stream_url:
+                return {"error": "No streamable URL found"}
+            
+            # 파일명 생성
+            title = info.get('title', 'video')[:50]  # 길이 제한
+            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+            filename = f"{safe_title}.{info.get('ext', 'mp4')}"
+            
+            # 302 리다이렉트로 실제 비디오 URL로 전달
+            from fastapi.responses import RedirectResponse
+            response = RedirectResponse(url=stream_url, status_code=302)
+            response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            return response
+            
+    except Exception as e:
+        logger.error(f"Streaming failed: {str(e)}")
+        return {"error": f"Streaming failed: {str(e)}"}
+
+@app.post("/download")
+async def prepare_download(request: VideoRequest):
+    """다운로드 준비 - 프록시 다운로드 URL 제공"""
+    try:
+        url = str(request.url)
+        # Railway 서버를 통한 프록시 다운로드 URL 생성
+        base_url = "https://railway-ytdlp-fresh-railway-ytdlp-fresh.up.railway.app"
+        proxy_url = f"{base_url}/stream?url={url}"
+        
+        return {
+            "success": True,
+            "download_ready": True,
+            "proxy_download_url": proxy_url,
+            "direct_url": proxy_url,
+            "message": "Railway 프록시 다운로드 URL이 준비되었습니다"
+        }
+        
+    except Exception as e:
+        logger.error(f"Download preparation failed: {str(e)}")
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Download preparation failed"
+        }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))

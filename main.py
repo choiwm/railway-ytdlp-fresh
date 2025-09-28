@@ -209,6 +209,37 @@ async def server_status():
         }
     }
 
+@app.get("/test-stream")
+async def test_stream():
+    """스트리밍 테스트 엔드포인트"""
+    test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    
+    try:
+        if not YT_DLP_AVAILABLE:
+            return {"error": "yt-dlp not available"}
+        
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'best[height<=480][ext=mp4]/best[height<=480]',
+            'noplaylist': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(test_url, download=False)
+            
+            return {
+                "status": "success",
+                "title": info.get('title'),
+                "has_url": bool(info.get('url')),
+                "url_preview": info.get('url', '')[:100] + "..." if info.get('url') else "No URL",
+                "format_selected": info.get('format_id'),
+                "ext": info.get('ext')
+            }
+            
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/stream")
 async def stream_video(url: str):
     """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할"""

@@ -49,7 +49,7 @@ class VideoRequest(BaseModel):
     quality: Optional[str] = "best"
 
 def extract_video_info(url: str) -> Dict[str, Any]:
-    """yt-dlp를 사용하여 비디오 정보 추출"""
+    """yt-dlp를 사용하여 비디오 정보 및 실제 다운로드 URL 추출"""
     if not YT_DLP_AVAILABLE:
         # Mock 데이터 반환
         return {
@@ -61,27 +61,72 @@ def extract_video_info(url: str) -> Dict[str, Any]:
                 {"format_id": "18", "ext": "mp4", "height": 360},
                 {"format_id": "22", "ext": "mp4", "height": 720}
             ],
-            "url": "https://mock-download-url.com/test-video.mp4"
+            "url": "https://mock-download-url.com/test-video.mp4",
+            "direct_url": "https://mock-download-url.com/test-video.mp4"
         }
     
     try:
+        # 실제 다운로드 가능한 비디오 포맷 선택 (720p 이하, mp4 우선)
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'format': 'best[height<=720]/best',
+            'format': '(mp4)[height<=720]/best[height<=720]/best',
             'noplaylist': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
+            # 실제 다운로드 가능한 URL 찾기
+            download_url = ""
+            selected_format = None
+            
+            # 선택된 포맷 찾기 (yt-dlp가 자동으로 선택한 최적 포맷)
+            if 'url' in info and info['url']:
+                download_url = info['url']
+                
+            # formats에서 mp4 포맷 찾기 (백업용)
+            if not download_url and 'formats' in info:
+                for fmt in info['formats']:
+                    if (fmt.get('ext') == 'mp4' and 
+                        fmt.get('height', 0) <= 720 and 
+                        fmt.get('url')):
+                        download_url = fmt['url']
+                        selected_format = fmt
+                        break
+                
+                # mp4를 못 찾았으면 다른 형식이라도
+                if not download_url:
+                    for fmt in info['formats']:
+                        if (fmt.get('height', 0) <= 720 and 
+                            fmt.get('url') and 
+                            fmt.get('vcodec') != 'none'):
+                            download_url = fmt['url']
+                            selected_format = fmt
+                            break
+            
+            # 포맷 정보 정리 (사용자에게 보여줄 용도)
+            processed_formats = []
+            if 'formats' in info:
+                for fmt in info['formats'][:5]:  # 상위 5개만
+                    if fmt.get('vcodec') != 'none' and fmt.get('url'):
+                        processed_formats.append({
+                            "format_id": fmt.get('format_id', ''),
+                            "ext": fmt.get('ext', ''),
+                            "height": fmt.get('height'),
+                            "filesize": fmt.get('filesize'),
+                            "note": fmt.get('format_note', '')
+                        })
+            
             return {
                 "title": info.get('title', 'Unknown Title'),
                 "duration": info.get('duration'),
                 "view_count": info.get('view_count'),
                 "uploader": info.get('uploader', 'Unknown'),
-                "formats": info.get('formats', [])[:3],  # 상위 3개만
-                "url": info.get('url', '')
+                "formats": processed_formats,
+                "url": download_url,  # 실제 다운로드 가능한 URL
+                "direct_url": download_url,  # 명시적으로 다운로드 URL
+                "selected_format": selected_format.get('format_note', 'auto') if selected_format else 'auto'
             }
             
     except Exception as e:
@@ -129,8 +174,10 @@ async def extract_video(request: VideoRequest):
                 "uploader": video_data.get("uploader"),
                 "formats": video_data.get("formats", [])
             },
-            "download_url": video_data.get("url", ""),
-            "message": "Video information extracted successfully (Fresh Deploy)"
+            "download_url": video_data.get("direct_url", ""),
+            "direct_url": video_data.get("direct_url", ""),
+            "selected_format": video_data.get("selected_format", "auto"),
+            "message": "Video information extracted successfully with direct download URL"
         }
         
     except HTTPException:

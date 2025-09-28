@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, HttpUrl
 import uvicorn
 
@@ -209,7 +210,7 @@ async def server_status():
     }
 
 @app.get("/stream")
-async def stream_video(url: str, token: str = None):
+async def stream_video(url: str):
     """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할"""
     try:
         logger.info(f"🎬 Streaming video: {url}")
@@ -242,7 +243,6 @@ async def stream_video(url: str, token: str = None):
             filename = f"{safe_title}.{info.get('ext', 'mp4')}"
             
             # 302 리다이렉트로 실제 비디오 URL로 전달
-            from fastapi.responses import RedirectResponse
             response = RedirectResponse(url=stream_url, status_code=302)
             response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
             return response

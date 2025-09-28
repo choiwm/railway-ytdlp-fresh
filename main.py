@@ -244,18 +244,21 @@ async def test_stream():
 async def stream_video(url: str):
     """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할"""
     try:
-        logger.info(f"🎬 Streaming video: {url}")
+        logger.info(f"🎬 Streaming request for: {url[:50]}...")
         
         if not YT_DLP_AVAILABLE:
+            logger.error("yt-dlp not available")
             return {"error": "yt-dlp not available for streaming"}
         
-        # yt-dlp로 실제 비디오 URL 추출 (더 관대한 포맷 선택)
+        # yt-dlp로 실제 비디오 URL 추출
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'format': 'best[height<=720][ext=mp4]/best[height<=720]/mp4/best',
             'noplaylist': True,
         }
+        
+        logger.info("Extracting video info with yt-dlp...")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -264,20 +267,29 @@ async def stream_video(url: str):
             stream_url = None
             if 'url' in info and info['url']:
                 stream_url = info['url']
+                logger.info(f"Found stream URL: {stream_url[:50]}...")
             
             if not stream_url:
+                logger.error("No streamable URL found")
                 return {"error": "No streamable URL found"}
             
-            # 파일명 생성
-            title = info.get('title', 'video')[:50]  # 길이 제한
-            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-            filename = f"{safe_title}.{info.get('ext', 'mp4')}"
+            # 간단하고 안전한 파일명 생성
+            timestamp = int(time.time())
+            ext = info.get('ext', 'mp4')
+            filename = f"youtube_video_{timestamp}.{ext}"
+            
+            logger.info(f"Generated filename: {filename}")
             
             # 302 리다이렉트로 실제 비디오 URL로 전달
             response = RedirectResponse(url=stream_url, status_code=302)
             response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            
+            logger.info("Redirecting to stream URL")
             return response
             
+    except UnicodeEncodeError as e:
+        logger.error(f"Unicode encoding error: {str(e)}")
+        return {"error": f"Character encoding error: {str(e)}"}
     except Exception as e:
         logger.error(f"Streaming failed: {str(e)}")
         return {"error": f"Streaming failed: {str(e)}"}

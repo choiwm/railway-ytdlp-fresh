@@ -242,49 +242,63 @@ async def test_stream():
 
 @app.get("/stream")
 async def stream_video(url: str):
-    """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할"""
+    """비디오 스트리밍/다운로드 - Railway 서버가 프록시 역할 (최적화됨)"""
     try:
-        logger.info(f"🎬 Streaming request for: {url[:50]}...")
+        logger.info(f"🎬 Fast streaming request for: {url[:50]}...")
         
         if not YT_DLP_AVAILABLE:
             logger.error("yt-dlp not available")
-            return {"error": "yt-dlp not available for streaming"}
+            raise HTTPException(status_code=503, detail="yt-dlp service not available")
         
-        # yt-dlp로 실제 비디오 URL 추출
+        # 최적화된 yt-dlp 옵션 (빠른 추출을 위해)
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'format': 'best[height<=720][ext=mp4]/best[height<=720]/mp4/best',
+            'format': 'worst[height<=480]/worst',  # 빠른 추출을 위해 낮은 품질 먼저 시도
             'noplaylist': True,
+            'extract_flat': False,
+            'no_check_certificate': True,
+            'socket_timeout': 10,  # 10초 타임아웃
         }
         
-        logger.info("Extracting video info with yt-dlp...")
+        logger.info("Fast extracting with optimized yt-dlp...")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 타임아웃 방지를 위한 빠른 추출
             info = ydl.extract_info(url, download=False)
             
             # 스트리밍 가능한 URL 찾기
             stream_url = None
             if 'url' in info and info['url']:
                 stream_url = info['url']
-                logger.info(f"Found stream URL: {stream_url[:50]}...")
+                logger.info(f"✅ Fast stream URL found: {stream_url[:50]}...")
             
             if not stream_url:
-                logger.error("No streamable URL found")
-                return {"error": "No streamable URL found"}
+                # 대안 URL 찾기
+                if 'formats' in info and info['formats']:
+                    for fmt in info['formats'][:3]:  # 처음 3개만 확인
+                        if fmt.get('url'):
+                            stream_url = fmt['url']
+                            logger.info(f"✅ Alternative stream URL found")
+                            break
             
-            # 간단하고 안전한 파일명 생성
+            if not stream_url:
+                logger.error("❌ No streamable URL found")
+                raise HTTPException(status_code=404, detail="No streamable URL found for this video")
+            
+            # 간단하고 안전한 파일명 생성 (ASCII만 사용)
             timestamp = int(time.time())
             ext = info.get('ext', 'mp4')
-            filename = f"youtube_video_{timestamp}.{ext}"
+            filename = f"video_{timestamp}.{ext}"
             
-            logger.info(f"Generated filename: {filename}")
+            logger.info(f"✅ Generated safe filename: {filename}")
             
             # 302 리다이렉트로 실제 비디오 URL로 전달
             response = RedirectResponse(url=stream_url, status_code=302)
             response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            response.headers["X-Railway-Status"] = "success"
             
-            logger.info("Redirecting to stream URL")
+            logger.info("✅ Fast redirect to stream URL completed")
             return response
             
     except UnicodeEncodeError as e:
